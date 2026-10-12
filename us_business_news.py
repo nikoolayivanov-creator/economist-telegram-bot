@@ -175,12 +175,12 @@ class ArticleTextParser(HTMLParser):
     def handle_data(self, data):
         if self.skip_stack:
             return
-        cleaned = re.sub(r"\\s+", " ", data).strip()
+        cleaned = re.sub(r"\s+", " ", data).strip()
         if cleaned:
             self.current.append(cleaned)
 
     def _flush(self):
-        text = re.sub(r"\\s+", " ", " ".join(self.current)).strip()
+        text = re.sub(r"\s+", " ", " ".join(self.current)).strip()
         if len(text) > 25:
             self.paragraphs.append(text)
         self.current = []
@@ -214,7 +214,7 @@ def fetch_article_text(url):
                 continue
             if paragraph not in paragraphs:
                 paragraphs.append(paragraph)
-        return "\\n\\n".join(paragraphs)[:16000]
+        return "\n\n".join(paragraphs)[:16000]
     except Exception as exc:
         print(f"Could not fetch article text: {type(exc).__name__}: {exc}")
         return ""
@@ -224,14 +224,14 @@ def write_english_brief(item):
     # No paid API required. Prefer the publisher's readable page; if blocked,
     # use the full RSS preview only when it contains enough substance to stand alone.
     article_text = fetch_article_text(item["url"])
-    excerpt = re.sub(r"\\s+", " ", item.get("description", "")).strip()
+    excerpt = re.sub(r"\s+", " ", item.get("description", "")).strip()
     title = item["title"].strip()
 
-    source_text = article_text if len(re.sub(r"\\s+", "", article_text)) >= 500 else ""
+    source_text = article_text if len(re.sub(r"\s+", "", article_text)) >= 500 else ""
     if not source_text and len(excerpt) >= 260:
         source_text = excerpt
         print("Using substantial publisher RSS preview; article HTML was unavailable.")
-    if len(re.sub(r"\\s+", "", source_text)) < 260:
+    if len(re.sub(r"\s+", "", source_text)) < 260:
         raise RuntimeError("Publisher page and RSS preview contain too little readable text.")
 
     normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
@@ -243,7 +243,7 @@ def write_english_brief(item):
     # make readable paragraphs from the supplied text without adding unsupported claims.
     paragraphs_in = [p.strip() for p in source_text.splitlines() if len(p.strip()) > 35]
     if len(paragraphs_in) < 2:
-        sentences = re.split(r"(?<=[.!?])\\s+", source_text)
+        sentences = re.split(r"(?<=[.!?])\s+", source_text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 35]
         paragraphs_in = [" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2)]
 
@@ -252,7 +252,7 @@ def write_english_brief(item):
     ]
     paragraphs.extend(paragraphs_in[:8])
     paragraphs.append("Read the original publisher article for full details; the publisher page may contain additional context.")
-    return "\\n\\n".join(paragraphs)
+    return "\n\n".join(paragraphs)
 
 
 def format_telegraph_nodes(text):
