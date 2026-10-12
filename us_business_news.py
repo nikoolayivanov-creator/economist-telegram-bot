@@ -1,4 +1,5 @@
 import html
+from html.parser import HTMLParser
 import json
 import os
 import re
@@ -139,13 +140,86 @@ def get_telegraph_token():
     })["access_token"]
 
 
+class ArticleTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.in_article = 0
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in ("script", "style", "nav", "footer", "header", "aside", "form"):
+            self.skip_depth += 1
+        if tag == "article":
+            self.in_article += 1
+        if tag in ("p", "h1", "h2", "h3", "li") and self.skip_depth == 0:
+            self.parts.append("\\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "nav", "footer", "header", "aside", "form") and self.skip_depth:
+            self.skip_depth -= 1
+        if tag == "article" and self.in_article:
+            self.in_article -= 1
+        if tag in ("p", "h1", "h2", "h3", "li"):
+            self.parts.append("\\n")
+
+    def handle_data(self, data):
+        if not self.skip_depth:
+            text = re.sub(r"\\s+", " ", data).strip()
+            if text:
+                self.parts.append(text)
+
+
+def fetch_article_text(url):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=25) as response:
+            raw = response.read(2_000_000).decode("utf-8", errors="replace")
+        parser = ArticleTextParser()
+        parser.feed(raw)
+        text = re.sub(r"\\n{2,}", "\\n", " ".join(parser.parts))
+        text = re.sub(r"\\s+", " ", text).strip()
+        return text[:16000]
+    except Exception as exc:
+        print(f"Could not fetch article text: {exc}")
+        return ""
+
+
 def write_english_brief(item):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is missing. Refusing to publish a headline-only Telegraph page; "
-            "add OPENAI_API_KEY in GitHub repository Actions secrets."
+        # Free fallback: use the publisher's actual page text, not a repeated RSS headline.
+        article_text = fetch_article_text(item["url"])
+        source_text = article_text or item.get("description", "")
+        title = item["title"].strip()
+        normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+        normalized_source = re.sub(r"[^a-z0-9]+", " ", source_text.casefold()).strip()
+        if len(normalized_source) < 500 or normalized_source == normalized_title:
+            raise RuntimeError(
+                "No OpenAI API key and the publisher page did not provide enough readable text. "
+                "Skipping this story rather than posting a headline-only page."
+            )
+        sentences = re.split(r"(?<=[.!?])\\s+", source_text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 45]
+        selected = []
+        for sentence in sentences:
+            if sentence.casefold() not in " ".join(selected).casefold():
+                selected.append(sentence)
+            if len(selected) >= 8:
+                break
+        excerpt = item.get("description", "").strip()
+        paragraphs = []
+        if excerpt and len(excerpt) > 100 and excerpt.casefold() != title.casefold():
+            paragraphs.append("What the publisher reports")
+            paragraphs.append(excerpt)
+        paragraphs.append("Article details")
+        paragraphs.extend(selected[:6])
+        paragraphs.append(
+            "This brief is assembled from the publisher's publicly accessible page. "
+            "It does not add unsupported claims or investment recommendations."
         )
+        return "\\n\\n".join(paragraphs)
     prompt = (
         "Create a useful, standalone English business-news brief based only on the supplied headline and "
         "feed excerpt. Write 3-5 concise paragraphs and a 'Key points' section with 2-4 bullets. Explain "
@@ -249,14 +323,11 @@ def main():
 
     if candidate:
         brief = write_english_brief(candidate)
-        # Reject summaries that are effectively just the headline or RSS snippet.
+        # Do not publish a Telegraph page that merely repeats the headline.
         normalized_title = re.sub(r"[^a-z0-9]+", " ", candidate["title"].casefold()).strip()
         normalized_brief = re.sub(r"[^a-z0-9]+", " ", brief.casefold()).strip()
         if len(normalized_brief) < 280 or normalized_brief == normalized_title:
-            raise RuntimeError(
-                "Generated brief is too short to be useful; skipping publication rather than posting "
-                "a duplicate headline/RSS snippet."
-            )
+            raise RuntimeError("Brief is too short; skipped publication.")
         page_url = create_telegraph_page(get_telegraph_token(), candidate, brief)
         source_url = html.escape(candidate["url"], quote=True)
         page_link = html.escape(page_url, quote=True)
