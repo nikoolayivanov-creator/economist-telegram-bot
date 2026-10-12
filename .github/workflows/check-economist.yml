@@ -28,10 +28,10 @@ jobs:
 
       - name: Save published issue
         run: |
-          if [[ -n "$(git status --porcelain last_issue.json)" ]]; then
+                  if [[ -n "$(git status --porcelain last_issue.json archive.json)" ]]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add last_issue.json
-            git commit -m "Update last published issue"
+            git add last_issue.json archive.json
+            git commit -m "Update published issue archive"
             git push
           fi
