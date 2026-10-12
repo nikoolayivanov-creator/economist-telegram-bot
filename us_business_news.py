@@ -279,30 +279,37 @@ def write_english_brief(item):
     title = item["title"].strip()
 
     source_text = article_text if len(re.sub(r"\s+", "", article_text)) >= 500 else ""
-    if not source_text and len(excerpt) >= 100:
+    if not source_text and len(excerpt) >= 40:
         source_text = excerpt
         print("Using publisher RSS preview; full article text was unavailable.")
-    if len(re.sub(r"\s+", "", source_text)) < 100:
-        raise RuntimeError("Publisher page and RSS preview contain too little readable text.")
+    if not source_text:
+        # A factual headline is still publishable when the feed supplies no excerpt.
+        # State the limitation explicitly rather than inventing article details.
+        source_text = title
+        print("Using headline-only brief; publisher text and RSS excerpt were unavailable.")
 
     normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
     normalized_source = re.sub(r"[^a-z0-9]+", " ", source_text.casefold()).strip()
-    if normalized_source == normalized_title or len(normalized_source) < 260:
+    headline_only = normalized_source == normalized_title
+    if not headline_only and len(normalized_source) < 40:
         raise RuntimeError("Source text is not substantial enough for a useful brief.")
 
     # Preserve publisher paragraph boundaries where available. For RSS previews,
     # make readable paragraphs from the supplied text without adding unsupported claims.
-    paragraphs_in = [p.strip() for p in source_text.splitlines() if len(p.strip()) > 35]
+    paragraphs_in = [p.strip() for p in source_text.splitlines() if len(p.strip()) > 20]
     if len(paragraphs_in) < 2:
         sentences = re.split(r"(?<=[.!?])\s+", source_text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 35]
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
         paragraphs_in = [" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2)]
 
     paragraphs = [
-        "This brief summarizes information available from the publisher. It does not add unverified claims or investment advice."
+        "This brief uses only the publisher's available headline or RSS preview. It does not add unverified claims or investment advice."
     ]
     paragraphs.extend(paragraphs_in[:8])
-    paragraphs.append("Read the original publisher article for full details; the publisher page may contain additional context.")
+    if headline_only:
+        paragraphs.append("The publisher feed did not provide additional article text. See the original source for context and details.")
+    else:
+        paragraphs.append("Read the original publisher article for full details; the publisher page may contain additional context.")
     return "\n\n".join(paragraphs)
 
 
