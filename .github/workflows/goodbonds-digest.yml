@@ -1,0 +1,52 @@
+name: Good Bonds Digest
+
+on:
+  schedule:
+    # Twice daily, approximately 08:00 and 18:00 Stockholm time in summer.
+    - cron: "0 6,16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goodbonds-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-goodbonds.txt
+
+      - name: Collect messages, summarize and publish
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_DESTINATION: "-1001317033615"
+          GOODBONDS_CHAT: "GoodBonds"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: "gpt-4.1-mini"
+        run: python goodbonds_digest.py
+
+      - name: Save message cursor
+        run: |
+          if [[ -n "$(git status --porcelain goodbonds_state.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add goodbonds_state.json
+            git commit -m "Update Good Bonds digest cursor"
+            git push
+          fi
