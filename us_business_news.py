@@ -272,47 +272,41 @@ def fetch_article_text(url):
 
 
 def write_english_brief(item):
-    # No paid API required. Prefer the publisher's readable page; if blocked,
-    # use the full RSS preview only when it contains enough substance to stand alone.
+    # Never publish a headline-only Telegraph page. No paid API is required:
+    # use publisher text, or a genuinely substantive RSS preview, otherwise skip.
     article_text = fetch_article_text(item["url"])
     excerpt = re.sub(r"\s+", " ", item.get("description", "")).strip()
     title = item["title"].strip()
 
     source_text = article_text if len(re.sub(r"\s+", "", article_text)) >= 500 else ""
-    if not source_text and len(excerpt) >= 40:
-        source_text = excerpt
-        print("Using publisher RSS preview; full article text was unavailable.")
-    if not source_text:
-        # A factual headline is still publishable when the feed supplies no excerpt.
-        # State the limitation explicitly rather than inventing article details.
-        source_text = title
-        print("Using headline-only brief; publisher text and RSS excerpt were unavailable.")
+    if source_text:
+        print(f"Brief source: publisher article ({len(source_text)} characters).")
+    else:
+        normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+        normalized_excerpt = re.sub(r"[^a-z0-9]+", " ", excerpt.casefold()).strip()
+        title_words = set(normalized_title.split())
+        excerpt_words = set(normalized_excerpt.split())
+        additional_words = excerpt_words - title_words
+        if len(excerpt) >= 250 and len(additional_words) >= 12:
+            source_text = excerpt
+            print(f"Brief source: substantive RSS preview ({len(excerpt)} characters).")
+        else:
+            raise RuntimeError(
+                f"Insufficient article content (publisher={len(article_text)} chars, "
+                f"RSS={len(excerpt)} chars); refusing headline-only publication."
+            )
 
-    normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
-    normalized_source = re.sub(r"[^a-z0-9]+", " ", source_text.casefold()).strip()
-    headline_only = normalized_source == normalized_title
-    if not headline_only and len(normalized_source) < 40:
-        raise RuntimeError("Source text is not substantial enough for a useful brief.")
-
-    # Preserve publisher paragraph boundaries where available. For RSS previews,
-    # make readable paragraphs from the supplied text without adding unsupported claims.
     paragraphs_in = [p.strip() for p in source_text.splitlines() if len(p.strip()) > 20]
     if len(paragraphs_in) < 2:
         sentences = re.split(r"(?<=[.!?])\s+", source_text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
         paragraphs_in = [" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2)]
-
     paragraphs = [
-        "This brief uses only the publisher's available headline or RSS preview. It does not add unverified claims or investment advice."
+        "This news brief is based on text available from the publisher. It does not add unverified claims or investment advice."
     ]
     paragraphs.extend(paragraphs_in[:8])
-    if headline_only:
-        paragraphs.append("The publisher feed did not provide additional article text. See the original source for context and details.")
-    else:
-        paragraphs.append("Read the original publisher article for full details; the publisher page may contain additional context.")
+    paragraphs.append("Read the original publisher article for full details and additional context.")
     return "\n\n".join(paragraphs)
-
-
 def format_telegraph_nodes(text):
     nodes = []
     lines = text.strip().splitlines()
