@@ -1,6 +1,12 @@
 name: Publish Barron's EPUB
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "barrons_bot.py"
+      - ".github/workflows/publish-barrons.yml"
   schedule:
     - cron: "0 15 * * 1"
   workflow_dispatch:
