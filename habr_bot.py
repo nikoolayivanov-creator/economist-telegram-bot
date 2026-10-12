@@ -41,7 +41,7 @@ def get_text(element, name):
 
 def clean_html(value):
     value = re.sub(r"<[^>]+>", " ", value or "")
-    return re.sub(r"\\s+", " ", html.unescape(value)).strip()
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
 
 
 def classify(title, description, categories):
