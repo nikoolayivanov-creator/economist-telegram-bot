@@ -113,6 +113,39 @@ def fetch_articles():
     return sorted(articles, key=lambda article: article["timestamp"])
 
 
+def telegram_api(method, token, payload=None):
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/{method}",
+        data=data,
+        headers={"Content-Type": "application/json"} if data is not None else {},
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Telegram API {method}: HTTP {error.code}: {details}"
+        ) from error
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram API {method}: {result}")
+    return result["result"]
+
+
+def verify_channel(token):
+    bot = telegram_api("getMe", token)
+    print(f"Telegram token accepted; bot username: @{bot.get('username', 'unknown')}")
+    chat = telegram_api("getChat", token, {"chat_id": CHANNEL})
+    print(
+        f"Target resolved: title={chat.get('title')!r}, "
+        f"username={chat.get('username')!r}, type={chat.get('type')!r}, "
+        f"id={chat.get('id')}"
+    )
+    return chat
+
+
 def send_message(article):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     excerpt = article["description"]
@@ -131,27 +164,16 @@ def send_message(article):
         "text": message,
         "disable_web_page_preview": False,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        details = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Telegram вернул HTTP {error.code}: {details}"
-        ) from error
-
-    if not result.get("ok"):
-        raise RuntimeError(f"Telegram вернул ошибку: {result}")
+    telegram_api("sendMessage", token, {
+        "chat_id": CHANNEL,
+        "text": message,
+        "disable_web_page_preview": False,
+    })
 
 
 def main():
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    verify_channel(token)
     articles = fetch_articles()
     old_state = {}
     if STATE_FILE.exists():
