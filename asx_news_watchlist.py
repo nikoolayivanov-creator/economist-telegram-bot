@@ -183,7 +183,10 @@ def main():
         unique.setdefault(item["key"], item)
     ordered = sorted(unique.values(), key=lambda x: x["timestamp"])
     fresh = [item for item in ordered if item["key"] not in seen]
-    fresh_groups = group_stories(fresh)
+    fresh_groups = [
+        group for group in group_stories(ordered)
+        if any(item["key"] not in seen for item in group)
+    ]
     if first_run:
         selected = fresh_groups[:MAX_INITIAL_POSTS]
     else:
