@@ -1,4 +1,5 @@
 import html
+from difflib import SequenceMatcher
 import json
 import os
 import re
@@ -89,28 +90,74 @@ def telegram_api(method, token, payload):
     return result["result"]
 
 
-def publish(item, token):
+def title_tokens(title):
+    title = html.unescape(title).casefold()
+    title = re.sub(r"\b(\d+(?:\.\d+)?)\s*(?:million|m)\b", r" \1m ", title)
+    title = re.sub(r"[^a-z0-9.]+", " ", title)
+    ignored = {
+        "the", "a", "an", "and", "for", "to", "of", "in", "on", "at", "by",
+        "asx", "shares", "share", "company", "limited", "ltd", "announces",
+        "update", "new", "market", "news", "stock", "stocks", "what", "you",
+        "need", "know", "today", "media", "cleansing", "notice",
+    }
+    return {word for word in title.split() if word not in ignored and len(word) > 1}
+
+
+def same_story(a, b):
+    if a["ticker"] != b["ticker"]:
+        return False
+    ta, tb = title_tokens(a["title"]), title_tokens(b["title"])
+    if not ta or not tb:
+        return False
+    overlap = len(ta & tb) / max(1, min(len(ta), len(tb)))
+    sequence = SequenceMatcher(None, " ".join(sorted(ta)), " ".join(sorted(tb))).ratio()
+    nums_a = set(re.findall(r"\d+(?:\.\d+)?", a["title"]))
+    nums_b = set(re.findall(r"\d+(?:\.\d+)?", b["title"]))
+    same_figures = bool(nums_a & nums_b)
+    return overlap >= 0.62 or sequence >= 0.70 or (same_figures and overlap >= 0.42)
+
+
+def group_stories(items):
+    groups = []
+    for item in sorted(items, key=lambda x: x["timestamp"], reverse=True):
+        match = next((group for group in groups if any(same_story(item, member) for member in group)), None)
+        if match is None:
+            groups.append([item])
+        else:
+            match.append(item)
+    return groups
+
+
+def publish(group, token):
+    item = max(group, key=lambda x: x["timestamp"])
     ticker = html.escape(item["ticker"])
     company = html.escape(item["company"])
     title = html.escape(item["title"])
-    source = html.escape(item.get("source") or "Google News")
     date = datetime.fromisoformat(item["published"]).astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
-    description = html.escape(item.get("description", "")[:900])
-    url = html.escape(item["url"], quote=True)
+    description = html.escape(item.get("description", "")[:700])
+    links = []
+    seen_urls = set()
+    for story in group:
+        if story["url"] in seen_urls:
+            continue
+        seen_urls.add(story["url"])
+        source = html.escape(story.get("source") or "Источник")
+        url = html.escape(story["url"], quote=True)
+        links.append(f'• <a href="{url}">{source}</a>')
     text = (
         f"<b>{title}</b>\n\n"
         f"<b>Компания:</b> {company} ({ticker})\n"
-        f"<b>Дата:</b> {date}\n"
-        f"<b>Источник:</b> {source}\n\n"
+        f"<b>Дата:</b> {date}\n\n"
         f"{description}\n\n"
-        f"<a href=\"{url}\">Открыть новость</a>\n\n"
-        "#ASX #Новости"
+        f"<b>Материалы по этой новости ({len(links)}):</b>\n"
+        + "\n".join(links[:8])
+        + "\n\n#ASX #Новости"
     )
     telegram_api("sendMessage", token, {
         "chat_id": CHANNEL,
-        "text": text,
+        "text": text[:4000],
         "parse_mode": "HTML",
-        "link_preview_options": {"is_disabled": False},
+        "link_preview_options": {"is_disabled": True},
     })
 
 
@@ -136,17 +183,18 @@ def main():
         unique.setdefault(item["key"], item)
     ordered = sorted(unique.values(), key=lambda x: x["timestamp"])
     fresh = [item for item in ordered if item["key"] not in seen]
+    fresh_groups = group_stories(fresh)
     if first_run:
-        selected = fresh[-MAX_INITIAL_POSTS:]
+        selected = fresh_groups[:MAX_INITIAL_POSTS]
     else:
-        selected = fresh[:MAX_POSTS_PER_RUN]
+        selected = fresh_groups[:MAX_POSTS_PER_RUN]
 
     posted = 0
-    for item in selected:
-        publish(item, token)
-        seen.add(item["key"])
+    for group in selected:
+        publish(group, token)
+        seen.update(item["key"] for item in group)
         posted += 1
-        print(f"Опубликовано: {item['ticker']} — {item['title']}")
+        print(f"Опубликовано одной подборкой ({len(group)} ссылок): {group[0]['ticker']} — {group[0]['title']}")
 
     # Mark all collected links as seen so the feed doesn't replay a backlog.
     seen.update(item["key"] for item in ordered)
@@ -154,7 +202,7 @@ def main():
         json.dumps({"seen_keys": sorted(seen)[-MAX_SEEN:]}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"Источников-компаний: {len(COMPANIES)}; найдено новостей: {len(ordered)}; новых: {len(fresh)}; опубликовано: {posted}")
+    print(f"Компаний: {len(COMPANIES)}; найдено ссылок: {len(ordered)}; новых ссылок: {len(fresh)}; групп новостей: {len(fresh_groups)}; опубликовано подборок: {posted}")
 
 
 if __name__ == "__main__":
