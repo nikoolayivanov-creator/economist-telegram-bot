@@ -300,61 +300,75 @@ def main():
     bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
     state = json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
     seen = set(state.get("seen_urls", []))
-    first_run = not seen
+    skipped = set(state.get("skipped_urls", []))
     collected = []
     for query in QUERIES:
         try:
             collected.extend(google_news(query))
         except Exception as exc:
             print(f"Search failed for {query[:70]!r}: {exc}")
+
     unique = {}
     for item in collected:
         unique.setdefault(item["url"], item)
     items = sorted(unique.values(), key=lambda x: x["timestamp"])
-    fresh = [item for item in items if item["url"] not in seen]
-    # On activation, sample only the newest result. Thereafter publish one per hourly run.
-    if first_run and fresh:
-        candidate = fresh[-1]
-        seen.update(item["url"] for item in fresh[:-1])
-    elif fresh:
-        candidate = fresh[0]
-    else:
-        candidate = None
+    fresh = [
+        item for item in items
+        if item["url"] not in seen and item["url"] not in skipped
+    ]
 
-    if candidate:
-        brief = write_english_brief(candidate)
-        # Do not publish a Telegraph page that merely repeats the headline.
-        normalized_title = re.sub(r"[^a-z0-9]+", " ", candidate["title"].casefold()).strip()
-        normalized_brief = re.sub(r"[^a-z0-9]+", " ", brief.casefold()).strip()
-        if len(normalized_brief) < 280 or normalized_brief == normalized_title:
-            raise RuntimeError("Brief is too short; skipped publication.")
-        page_url = create_telegraph_page(get_telegraph_token(), candidate, brief)
-        source_url = html.escape(candidate["url"], quote=True)
-        page_link = html.escape(page_url, quote=True)
-        title = html.escape(candidate["title"])
-        source = html.escape(candidate.get("source") or "Original source")
-        date = datetime.fromisoformat(candidate["published"]).strftime("%Y-%m-%d %H:%M UTC")
-        message = (
-            f"<b>{title}</b>\n\n"
-            f"<b>Source:</b> {source}\n<b>Published:</b> {date}\n\n"
-            f"<a href=\"{page_link}\">Read the full news brief in Telegram (Telegraph)</a>\n"
-            f"<a href=\"{source_url}\">Original article</a>\n\n"
-            "#USMarkets #Business #Companies"
-        )
-        telegram("sendMessage", bot_token, {
-            "chat_id": CHANNEL, "text": message, "parse_mode": "HTML",
-            "link_preview_options": {"is_disabled": True},
-        })
-        seen.add(candidate["url"])
-        print(f"Published: {candidate['title']} | Telegraph: {page_url}")
-    # Do not mark newer queued items as seen: they will be published on later runs.
-    if candidate:
-        seen.update(item["url"] for item in items if item["timestamp"] < candidate["timestamp"])
+    published_count = 0
+    # Try multiple candidate stories in one run. A page with insufficient text is
+    # skipped without aborting the workflow, so one blocked publisher cannot stall the feed.
+    for candidate in fresh:
+        if published_count >= MAX_POSTS_PER_RUN:
+            break
+        try:
+            brief = write_english_brief(candidate)
+            normalized_title = re.sub(r"[^a-z0-9]+", " ", candidate["title"].casefold()).strip()
+            normalized_brief = re.sub(r"[^a-z0-9]+", " ", brief.casefold()).strip()
+            if len(normalized_brief) < 280 or normalized_brief == normalized_title:
+                raise RuntimeError("Brief is too short; skipped publication.")
+
+            telegraph_token = get_telegraph_token()
+            page_url = create_telegraph_page(telegraph_token, candidate, brief)
+            source_url = html.escape(candidate["url"], quote=True)
+            page_link = html.escape(page_url, quote=True)
+            title = html.escape(candidate["title"])
+            source = html.escape(candidate.get("source") or "Original source")
+            date = datetime.fromisoformat(candidate["published"]).strftime("%Y-%m-%d %H:%M UTC")
+            message = (
+                f"<b>{title}</b>\n\n"
+                f"<b>Source:</b> {source}\n<b>Published:</b> {date}\n\n"
+                f"<a href=\"{page_link}\">Read the full news brief in Telegram (Telegraph)</a>\n"
+                f"<a href=\"{source_url}\">Original article</a>\n\n"
+                "#USMarkets #Business #Companies"
+            )
+            telegram("sendMessage", bot_token, {
+                "chat_id": CHANNEL, "text": message, "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True},
+            })
+            seen.add(candidate["url"])
+            published_count += 1
+            print(f"Published: {candidate['title']} | Telegraph: {page_url}")
+        except Exception as exc:
+            # Keep going to the next source. Remember permanently unusable stories
+            # separately from successfully published ones to avoid retrying them hourly.
+            skipped.add(candidate["url"])
+            print(f"Skipping story {candidate.get('title', '(untitled)')!r}: {type(exc).__name__}: {exc}")
+            continue
+
     STATE_FILE.write_text(
-        json.dumps({"seen_urls": sorted(seen)[-MAX_SEEN:]}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps({
+            "seen_urls": sorted(seen)[-MAX_SEEN:],
+            "skipped_urls": sorted(skipped)[-MAX_SEEN:],
+        }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"Unique free-source stories: {len(items)}; unseen: {len(fresh)}; published: {1 if candidate else 0}")
+    print(
+        f"Unique free-source stories: {len(items)}; "
+        f"unseen/unskipped: {len(fresh)}; published: {published_count}"
+    )
 
 
 if __name__ == "__main__":
