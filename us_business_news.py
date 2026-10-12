@@ -279,10 +279,10 @@ def write_english_brief(item):
     title = item["title"].strip()
 
     source_text = article_text if len(re.sub(r"\s+", "", article_text)) >= 500 else ""
-    if not source_text and len(excerpt) >= 260:
+    if not source_text and len(excerpt) >= 100:
         source_text = excerpt
-        print("Using substantial publisher RSS preview; article HTML was unavailable.")
-    if len(re.sub(r"\s+", "", source_text)) < 260:
+        print("Using publisher RSS preview; full article text was unavailable.")
+    if len(re.sub(r"\s+", "", source_text)) < 100:
         raise RuntimeError("Publisher page and RSS preview contain too little readable text.")
 
     normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
