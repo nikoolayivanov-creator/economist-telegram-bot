@@ -52,7 +52,7 @@ def summarize(messages, start_label, end_label):
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     transcript = []
     for msg in messages:
-        sender = (msg.sender_name or "Участник").replace("\n", " ").strip()
+        sender = f"user_id:{msg.sender_id}" if msg.sender_id else "Участник"
         body = (msg.text or "").strip()
         if not body:
             continue
@@ -148,10 +148,9 @@ async def main_async():
             "\n\n<i>Пересказ обсуждения, а не подтверждённая аналитика "
             "и не индивидуальная инвестиционная рекомендация.</i>"
         )
+        # Clip the plain-text summary before adding HTML wrappers to avoid broken tags.
+        digest = digest[:3000].rsplit(" ", 1)[0] + ("…" if len(digest) > 3000 else "")
         message = first_line + html.escape(digest) + footer
-        # Telegram's sendMessage limit is 4096 characters; keep a safety margin.
-        if len(message) > 3900:
-            message = message[:3880].rsplit(" ", 1)[0] + "…"
         telegram_send(message)
 
         state = {
