@@ -1,0 +1,44 @@
+name: Habr Article Monitor
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "habr_bot.py"
+      - ".github/workflows/habr-monitor.yml"
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor-habr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Get repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Classify and publish relevant Habr articles
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python habr_bot.py
+
+      - name: Save Habr deduplication state
+        run: |
+          if [[ -n "$(git status --porcelain habr_state.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add habr_state.json
+            git commit -m "Update Habr article tracking state"
+            git push
+          fi
