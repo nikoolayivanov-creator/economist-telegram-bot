@@ -1,0 +1,45 @@
+name: US Business and Market News
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "us_business_news.py"
+      - ".github/workflows/us-business-news.yml"
+  schedule:
+    - cron: "43 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: us-business-news
+  cancel-in-progress: false
+
+jobs:
+  publish-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Search news and publish Telegraph pages
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAPH_ACCESS_TOKEN: ${{ secrets.TELEGRAPH_ACCESS_TOKEN }}
+        run: python us_business_news.py
+      - name: Save deduplication state
+        run: |
+          if [[ -n "$(git status --porcelain us_business_news_state.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add us_business_news_state.json
+            git commit -m "Update US business news tracking state"
+            git push
+          fi
