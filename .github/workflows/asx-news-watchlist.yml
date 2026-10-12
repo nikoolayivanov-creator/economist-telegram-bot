@@ -8,7 +8,7 @@ on:
       - "asx_news_watchlist.py"
       - ".github/workflows/asx-news-watchlist.yml"
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 
 permissions:
