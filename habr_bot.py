@@ -166,21 +166,21 @@ def send_message(article):
     if len(excerpt) > 500:
         excerpt = excerpt[:497].rsplit(" ", 1)[0] + "..."
 
-    # Plain text keeps article-provided content from being interpreted as markup.
+    # Escape article content before using Telegram HTML formatting.
+    title = html.escape(article["title"])
+    excerpt = html.escape(excerpt)
+    url = html.escape(article["url"], quote=True)
+    tags = " · ".join(html.escape(label) for label in article["labels"])
     message = (
-        f"{' + '.join(article['labels'])}\n\n"
-        f"{article['title']}\n\n"
+        f"<b>{title}</b>\n\n"
         f"{excerpt}\n\n"
-        f"{article['url']}"
+        f"{url}\n\n"
+        f"{tags}"
     )
-    payload = json.dumps({
-        "chat_id": CHANNEL,
-        "text": message,
-        "disable_web_page_preview": False,
-    }).encode("utf-8")
     telegram_api("sendMessage", token, {
         "chat_id": CHANNEL,
         "text": message,
+        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     })
 
