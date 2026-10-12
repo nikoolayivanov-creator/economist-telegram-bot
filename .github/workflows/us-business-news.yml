@@ -8,7 +8,7 @@ on:
       - "us_business_news.py"
       - ".github/workflows/us-business-news.yml"
   schedule:
-    - cron: "43 */6 * * *"
+    - cron: "43 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAPH_ACCESS_TOKEN: ${{ secrets.TELEGRAPH_ACCESS_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: "gpt-4.1-mini"
         run: python us_business_news.py
       - name: Save deduplication state
         run: |
