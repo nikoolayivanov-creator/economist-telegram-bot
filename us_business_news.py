@@ -154,7 +154,7 @@ class ArticleTextParser(HTMLParser):
         if tag == "article":
             self.in_article += 1
         if tag in ("p", "h1", "h2", "h3", "li") and self.skip_depth == 0:
-            self.parts.append("\\n")
+            self.parts.append("\n")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "nav", "footer", "header", "aside", "form") and self.skip_depth:
@@ -162,7 +162,7 @@ class ArticleTextParser(HTMLParser):
         if tag == "article" and self.in_article:
             self.in_article -= 1
         if tag in ("p", "h1", "h2", "h3", "li"):
-            self.parts.append("\\n")
+            self.parts.append("\n")
 
     def handle_data(self, data):
         if not self.skip_depth:
@@ -178,7 +178,7 @@ def fetch_article_text(url):
             raw = response.read(2_000_000).decode("utf-8", errors="replace")
         parser = ArticleTextParser()
         parser.feed(raw)
-        text = re.sub(r"\n{2,}", "\\n", " ".join(parser.parts))
+        text = re.sub(r"\n{2,}", "\n", " ".join(parser.parts))
         text = re.sub(r"\s+", " ", text).strip()
         return text[:16000]
     except Exception as exc:
@@ -219,7 +219,7 @@ def write_english_brief(item):
             "This brief is assembled from the publisher's publicly accessible page. "
             "It does not add unsupported claims or investment recommendations."
         )
-        return "\\n\\n".join(paragraphs)
+        return "\n\n".join(paragraphs)
     prompt = (
         "Create a useful, standalone English business-news brief based only on the supplied headline and "
         "feed excerpt. Write 3-5 concise paragraphs and a 'Key points' section with 2-4 bullets. Explain "
