@@ -1,96 +1,149 @@
 import json
 import os
-import urllib.parse
+import re
 import urllib.request
-import xml.etree.ElementTree as ET
+import urllib.error
 from pathlib import Path
 
-FEED_URL = "https://www.economist.com/printedition/rss.xml"
+REPO_API = (
+    "https://api.github.com/repos/"
+    "blleng/The-Economist/git/trees/main?recursive=1"
+)
+RAW_BASE = "https://raw.githubusercontent.com/blleng/The-Economist/main/"
 STATE_FILE = Path("last_issue.json")
+CHANNEL = "@basicofinvestments"
 
 
-def get_latest_issue():
+def get_latest_epub():
     request = urllib.request.Request(
-        FEED_URL,
-        headers={"User-Agent": "EconomistTelegramNotifier/1.0"},
+        REPO_API,
+        headers={"User-Agent": "Economist-Telegram-Bot"},
     )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=60) as response:
+        tree = json.loads(response.read().decode("utf-8"))
+
+    pattern = re.compile(
+        r"^TE-(\d{4}-\d{2}-\d{2})/TE-\1\.epub$",
+        re.IGNORECASE,
+    )
+
+    issues = []
+
+    for item in tree.get("tree", []):
+        if item.get("type") != "blob":
+            continue
+
+        path = item["path"]
+        match = pattern.match(path)
+
+        if match:
+            issues.append((match.group(1), path))
+
+    if not issues:
+        raise RuntimeError(
+            "Не найден ни один EPUB в GitHub-архиве"
+        )
+
+    date, path = max(issues, key=lambda issue: issue[0])
+
+    return date, path
+
+
+def download_epub(path):
+    from urllib.parse import quote
+
+    url = RAW_BASE + quote(path, safe="/")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Economist-Telegram-Bot"},
+    )
+
+    with urllib.request.urlopen(request, timeout=120) as response:
         data = response.read()
 
-    root = ET.fromstring(data)
-    channel = root.find("channel")
+    if not data or not data.startswith(b"PK"):
+        raise RuntimeError("Скачанный файл не похож на EPUB/ZIP")
 
-    if channel is None:
-        raise RuntimeError("RSS feed has no channel")
-
-    item = channel.find("item")
-
-    if item is None:
-        raise RuntimeError("No issues found in RSS feed")
-
-    def field(name):
-        element = item.find(name)
-        return element.text.strip() if element is not None and element.text else ""
-
-    title = field("title")
-    link = field("link")
-    guid = field("guid") or link
-
-    if not title or not link or not guid:
-        raise RuntimeError("Issue information is incomplete")
-
-    return {"guid": guid, "title": title, "link": link}
+    return data
 
 
-def send_telegram(message):
+def send_document(date, path, content):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = "@basicofinvestments"
+    boundary = "----EconomistTelegramBotBoundary"
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    filename = path.rsplit("/", 1)[-1]
 
-    data = urllib.parse.urlencode({
-        "chat_id": chat_id,
-        "text": message,
-    }).encode("utf-8")
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+        f"{CHANNEL}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="caption"\r\n\r\n'
+        f"The Economist — выпуск от {date}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="document"; '
+        f'filename="{filename}"\r\n'
+        f"Content-Type: application/epub+zip\r\n\r\n"
+    ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode()
 
-    request = urllib.request.Request(url, data=data)
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
 
-    with urllib.request.urlopen(request, timeout=30) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Telegram не принял EPUB: HTTP {error.code}: {details}"
+        ) from error
 
     if not result.get("ok"):
-        raise RuntimeError(f"Telegram error: {result}")
+        raise RuntimeError(f"Ошибка Telegram: {result}")
+
+    return result
 
 
 def main():
-    issue = get_latest_issue()
+    date, path = get_latest_epub()
+    issue_id = path
 
-    previous_guid = None
+    previous_id = None
 
     if STATE_FILE.exists():
-        previous_guid = json.loads(
+        previous_id = json.loads(
             STATE_FILE.read_text(encoding="utf-8")
-        ).get("guid")
+        ).get("path")
 
-    if issue["guid"] == previous_guid:
-        print("No new issue.")
+    if previous_id == issue_id:
+        print(f"Выпуск от {date} уже опубликован.")
         return
 
-    message = (
-        "Новый выпуск The Economist\n\n"
-        f"{issue['title']}\n"
-        f"{issue['link']}"
-    )
+    print(f"Найден новый выпуск: {path}")
+    content = download_epub(path)
 
-    send_telegram(message)
+    print(f"Размер файла: {len(content) / 1024 / 1024:.1f} МБ")
+    send_document(date, path, content)
 
     STATE_FILE.write_text(
-        json.dumps({"guid": issue["guid"]}, indent=2),
+        json.dumps(
+            {"path": issue_id, "date": date},
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
         encoding="utf-8",
     )
 
-    print(f"Published: {issue['title']}")
+    print(f"EPUB успешно отправлен в {CHANNEL}: {path}")
 
 
 if __name__ == "__main__":
