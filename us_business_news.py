@@ -51,6 +51,40 @@ def request_json(url, payload, headers=None):
         return json.loads(response.read().decode("utf-8"))
 
 
+def resolve_publisher_url(link):
+    """Resolve Google News RSS wrappers to the actual publisher article URL."""
+    def allowed(url):
+        host = urllib.parse.urlparse(url).netloc.lower().removeprefix("www.")
+        return any(host == domain or host.endswith("." + domain) for domain in ALLOWED_DOMAINS)
+
+    try:
+        req = urllib.request.Request(link, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+        })
+        with urllib.request.urlopen(req, timeout=20) as response:
+            final_url = response.geturl()
+            raw = response.read(1_500_000).decode("utf-8", errors="replace")
+        if allowed(final_url):
+            return final_url
+        # Google News sometimes serves an HTML wrapper instead of an HTTP redirect.
+        candidates = []
+        for match in re.findall(r'''(?:href|content)=["']([^"']+)["']''', raw, flags=re.I):
+            value = html.unescape(match).replace("\\/", "/")
+            if value.startswith("//"):
+                value = "https:" + value
+            if value.startswith("http") and allowed(value):
+                candidates.append(value)
+        # Prefer article-looking URLs over publisher homepages.
+        for value in candidates:
+            path = urllib.parse.urlparse(value).path.strip("/")
+            if path and path not in {"", "news", "press-releases"}:
+                return value
+    except Exception as exc:
+        print(f"Google News URL resolution failed: {type(exc).__name__}: {exc}")
+    return link
+
+
 def google_news(query):
     after = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).date().isoformat()
     params = urllib.parse.urlencode({
@@ -82,13 +116,7 @@ def google_news(query):
             continue
         if any(term in (title + " " + description).casefold() for term in EXCLUDE_TERMS):
             continue
-        # Resolve Google News redirect so the original publisher is linked in both places.
-        try:
-            redirect_req = urllib.request.Request(link, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(redirect_req, timeout=20) as response:
-                original_url = response.geturl()
-        except Exception:
-            original_url = link
+        original_url = resolve_publisher_url(link)
         host = urllib.parse.urlparse(original_url).netloc.lower().removeprefix("www.")
         source_name = source.casefold()
         if not any(host == domain or host.endswith("." + domain) for domain in ALLOWED_DOMAINS):
@@ -339,7 +367,7 @@ def main():
     bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
     state = json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
     seen = set(state.get("seen_urls", []))
-    skipped = set(state.get("skipped_urls", []))
+    skipped = set()  # Retry older skipped stories after parser improvements.
     collected = []
     for query in QUERIES:
         try:
@@ -353,7 +381,7 @@ def main():
     items = sorted(unique.values(), key=lambda x: x["timestamp"])
     fresh = [
         item for item in items
-        if item["url"] not in seen and item["url"] not in skipped
+        if item["url"] not in seen
     ]
     # On an empty state file, start with the newest available story; after that,
     # work oldest-first so queued stories are not silently jumped over.
@@ -404,7 +432,7 @@ def main():
     STATE_FILE.write_text(
         json.dumps({
             "seen_urls": sorted(seen)[-MAX_SEEN:],
-            "skipped_urls": sorted(skipped)[-MAX_SEEN:],
+            "skipped_urls": [],
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
