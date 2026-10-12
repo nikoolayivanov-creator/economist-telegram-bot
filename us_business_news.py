@@ -191,33 +191,56 @@ class ArticleTextParser(HTMLParser):
 
 
 def fetch_article_text(url):
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        with urllib.request.urlopen(req, timeout=25) as response:
-            raw = response.read(2_000_000).decode("utf-8", errors="replace")
-        parser = ArticleTextParser()
-        parser.feed(raw)
-        parser.close()
-        # Drop repeated boilerplate; keep paragraph boundaries for the Telegraph page.
-        paragraphs = []
-        for paragraph in parser.paragraphs:
-            normalized = paragraph.casefold()
-            if any(term in normalized for term in (
-                "subscribe to our newsletter", "sign up for our newsletter",
-                "privacy policy", "terms of use", "all rights reserved",
-                "cookie policy", "read more stories",
-            )):
-                continue
-            if paragraph not in paragraphs:
-                paragraphs.append(paragraph)
-        return "\n\n".join(paragraphs)[:16000]
-    except Exception as exc:
-        print(f"Could not fetch article text: {type(exc).__name__}: {exc}")
-        return ""
+    """Try the publisher directly, then Jina Reader's public text view."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,text/plain",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    attempts = [
+        ("publisher", url, True),
+        ("reader", "https://r.jina.ai/" + url, False),
+    ]
+    for label, target, parse_html in attempts:
+        try:
+            req = urllib.request.Request(target, headers=headers)
+            with urllib.request.urlopen(req, timeout=35) as response:
+                raw = response.read(2_000_000).decode("utf-8", errors="replace")
+            if parse_html:
+                parser = ArticleTextParser()
+                parser.feed(raw)
+                parser.close()
+                paragraphs = parser.paragraphs
+            else:
+                # Jina Reader returns readable plain text, often including metadata first.
+                paragraphs = [
+                    re.sub(r"^#+\\s*", "", line).strip()
+                    for line in raw.splitlines()
+                    if len(re.sub(r"^#+\\s*", "", line).strip()) > 35
+                ]
+                paragraphs = [
+                    p for p in paragraphs
+                    if not p.casefold().startswith(("title:", "url source:", "markdown content:"))
+                ]
+            clean = []
+            for paragraph in paragraphs:
+                normalized = paragraph.casefold()
+                if any(term in normalized for term in (
+                    "subscribe to our newsletter", "sign up for our newsletter",
+                    "privacy policy", "terms of use", "all rights reserved",
+                    "cookie policy", "read more stories",
+                )):
+                    continue
+                if paragraph not in clean:
+                    clean.append(paragraph)
+            text = "\\n\\n".join(clean)[:16000]
+            if len(re.sub(r"\\s+", "", text)) >= 500:
+                print(f"Retrieved article text via {label}: {len(text)} characters.")
+                return text
+            print(f"{label} returned too little article text ({len(text)} characters).")
+        except Exception as exc:
+            print(f"{label} fetch failed: {type(exc).__name__}: {exc}")
+    return ""
 
 
 def write_english_brief(item):
