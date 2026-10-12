@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 
 RSS_URL = "https://habr.com/ru/rss/articles/?fl=ru&with_hubs=true&with_tags=true&limit=100"
 STATE_FILE = Path("habr_state.json")
-CHANNEL = "@basicofinvestments"
+CHANNEL = "-1001317033615"
 MAX_INITIAL_POSTS = 5
 MAX_SEEN_URLS = 1000
 
