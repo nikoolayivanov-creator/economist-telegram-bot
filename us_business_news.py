@@ -64,7 +64,13 @@ def google_news(query):
             continue
         if not title or not link or published < datetime.now(timezone.utc)-timedelta(days=LOOKBACK_DAYS):
             continue
-        items.append({"title": title, "url": link, "description": desc[:1800], "source": source,
+        try:
+            redirect_req = urllib.request.Request(link, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(redirect_req, timeout=20) as redirect_response:
+                original_url = redirect_response.geturl()
+        except Exception:
+            original_url = link
+        items.append({"title": title, "url": original_url, "description": desc[:1800], "source": source,
                       "published": published.isoformat(), "timestamp": published.timestamp()})
     return items
 
@@ -120,10 +126,17 @@ def main():
     for item in collected:
         # Keep only sources explicitly chosen as free-to-read or official release/document sources.
         host = urllib.parse.urlparse(item["url"]).netloc.lower().removeprefix("www.")
-        allowed = any(domain in host for domain in (
-            "apnews.com", "globenewswire.com", "federalreserve.gov", "bls.gov",
-            "sec.gov", "stocktitan.net"
-        ))
+        source_name = (item.get("source") or "").lower()
+        allowed = (
+            any(domain in host for domain in (
+                "apnews.com", "globenewswire.com", "federalreserve.gov", "bls.gov",
+                "sec.gov", "stocktitan.net"
+            ))
+            or any(name in source_name for name in (
+                "associated press", "ap news", "globenewswire", "federal reserve",
+                "bureau of labor statistics", "sec", "stock titan"
+            ))
+        )
         if allowed:
             unique.setdefault(item["url"], item)
     items = sorted(unique.values(), key=lambda x: x["timestamp"], reverse=True)
