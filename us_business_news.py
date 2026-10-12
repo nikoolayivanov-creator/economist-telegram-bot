@@ -166,7 +166,7 @@ class ArticleTextParser(HTMLParser):
 
     def handle_data(self, data):
         if not self.skip_depth:
-            text = re.sub(r"\\s+", " ", data).strip()
+            text = re.sub(r"\s+", " ", data).strip()
             if text:
                 self.parts.append(text)
 
@@ -178,8 +178,8 @@ def fetch_article_text(url):
             raw = response.read(2_000_000).decode("utf-8", errors="replace")
         parser = ArticleTextParser()
         parser.feed(raw)
-        text = re.sub(r"\\n{2,}", "\\n", " ".join(parser.parts))
-        text = re.sub(r"\\s+", " ", text).strip()
+        text = re.sub(r"\n{2,}", "\\n", " ".join(parser.parts))
+        text = re.sub(r"\s+", " ", text).strip()
         return text[:16000]
     except Exception as exc:
         print(f"Could not fetch article text: {exc}")
@@ -200,7 +200,7 @@ def write_english_brief(item):
                 "No OpenAI API key and the publisher page did not provide enough readable text. "
                 "Skipping this story rather than posting a headline-only page."
             )
-        sentences = re.split(r"(?<=[.!?])\\s+", source_text)
+        sentences = re.split(r"(?<=[.!?])\s+", source_text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 45]
         selected = []
         for sentence in sentences:
