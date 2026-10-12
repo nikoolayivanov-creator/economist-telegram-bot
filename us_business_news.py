@@ -141,102 +141,118 @@ def get_telegraph_token():
 
 
 class ArticleTextParser(HTMLParser):
+    """Extract readable paragraphs while ignoring page chrome and scripts."""
+    SKIP_TAGS = {"script", "style", "nav", "footer", "header", "aside", "form", "noscript", "svg"}
+
     def __init__(self):
-        super().__init__()
-        self.parts = []
-        self.in_article = 0
-        self.skip_depth = 0
+        super().__init__(convert_charrefs=True)
+        self.paragraphs = []
+        self.current = []
+        self.skip_stack = []
 
     def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        if tag in ("script", "style", "nav", "footer", "header", "aside", "form"):
-            self.skip_depth += 1
-        if tag == "article":
-            self.in_article += 1
-        if tag in ("p", "h1", "h2", "h3", "li") and self.skip_depth == 0:
-            self.parts.append("\n")
+        if tag in self.SKIP_TAGS:
+            self.skip_stack.append(tag)
+            return
+        if self.skip_stack:
+            return
+        if tag in {"p", "h1", "h2", "h3", "li", "br"}:
+            self._flush()
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style", "nav", "footer", "header", "aside", "form") and self.skip_depth:
-            self.skip_depth -= 1
-        if tag == "article" and self.in_article:
-            self.in_article -= 1
-        if tag in ("p", "h1", "h2", "h3", "li"):
-            self.parts.append("\n")
+        if self.skip_stack:
+            if tag == self.skip_stack[-1] or tag in self.SKIP_TAGS:
+                # HTML is imperfect; unwind through the matching skipped tag.
+                if tag in self.skip_stack:
+                    while self.skip_stack:
+                        popped = self.skip_stack.pop()
+                        if popped == tag:
+                            break
+            return
+        if tag in {"p", "h1", "h2", "h3", "li", "br"}:
+            self._flush()
 
     def handle_data(self, data):
-        if not self.skip_depth:
-            text = re.sub(r"\s+", " ", data).strip()
-            if text:
-                self.parts.append(text)
+        if self.skip_stack:
+            return
+        cleaned = re.sub(r"\\s+", " ", data).strip()
+        if cleaned:
+            self.current.append(cleaned)
+
+    def _flush(self):
+        text = re.sub(r"\\s+", " ", " ".join(self.current)).strip()
+        if len(text) > 25:
+            self.paragraphs.append(text)
+        self.current = []
+
+    def close(self):
+        super().close()
+        self._flush()
 
 
 def fetch_article_text(url):
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
         with urllib.request.urlopen(req, timeout=25) as response:
             raw = response.read(2_000_000).decode("utf-8", errors="replace")
         parser = ArticleTextParser()
         parser.feed(raw)
-        text = re.sub(r"\n{2,}", "\n", " ".join(parser.parts))
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:16000]
+        parser.close()
+        # Drop repeated boilerplate; keep paragraph boundaries for the Telegraph page.
+        paragraphs = []
+        for paragraph in parser.paragraphs:
+            normalized = paragraph.casefold()
+            if any(term in normalized for term in (
+                "subscribe to our newsletter", "sign up for our newsletter",
+                "privacy policy", "terms of use", "all rights reserved",
+                "cookie policy", "read more stories",
+            )):
+                continue
+            if paragraph not in paragraphs:
+                paragraphs.append(paragraph)
+        return "\\n\\n".join(paragraphs)[:16000]
     except Exception as exc:
-        print(f"Could not fetch article text: {exc}")
+        print(f"Could not fetch article text: {type(exc).__name__}: {exc}")
         return ""
 
 
 def write_english_brief(item):
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        # Free fallback: use the publisher's actual page text, not a repeated RSS headline.
-        article_text = fetch_article_text(item["url"])
-        source_text = article_text or item.get("description", "")
-        title = item["title"].strip()
-        normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
-        normalized_source = re.sub(r"[^a-z0-9]+", " ", source_text.casefold()).strip()
-        if len(normalized_source) < 500 or normalized_source == normalized_title:
-            raise RuntimeError(
-                "No OpenAI API key and the publisher page did not provide enough readable text. "
-                "Skipping this story rather than posting a headline-only page."
-            )
-        sentences = re.split(r"(?<=[.!?])\s+", source_text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 45]
-        selected = []
-        for sentence in sentences:
-            if sentence.casefold() not in " ".join(selected).casefold():
-                selected.append(sentence)
-            if len(selected) >= 8:
-                break
-        excerpt = item.get("description", "").strip()
-        paragraphs = []
-        if excerpt and len(excerpt) > 100 and excerpt.casefold() != title.casefold():
-            paragraphs.append("What the publisher reports")
-            paragraphs.append(excerpt)
-        paragraphs.append("Article details")
-        paragraphs.extend(selected[:6])
-        paragraphs.append(
-            "This brief is assembled from the publisher's publicly accessible page. "
-            "It does not add unsupported claims or investment recommendations."
-        )
-        return "\n\n".join(paragraphs)
-    prompt = (
-        "Create a useful, standalone English business-news brief based only on the supplied headline and "
-        "feed excerpt. Write 3-5 concise paragraphs and a 'Key points' section with 2-4 bullets. Explain "
-        "what happened, which company or companies are involved, and why it matters to the business or stock "
-        "market reader. Include numbers only if supplied. Do not invent facts, quotes, financial impact, "
-        "or predictions. If the excerpt is too thin, explicitly say the available source preview is limited. "
-        "This must be an original summary, not a verbatim copy of copyrighted journalism.\n\n"
-        f"Headline: {item['title']}\nPublisher: {item['source']}\n"
-        f"Published: {item['published']}\nSource excerpt: {item.get('description', '')}"
-    )
-    response = request_json(
-        "https://api.openai.com/v1/chat/completions",
-        {"model": OPENAI_MODEL, "temperature": 0.2,
-         "messages": [{"role": "user", "content": prompt}]},
-        {"Authorization": f"Bearer {api_key}"},
-    )
-    return response["choices"][0]["message"]["content"].strip()
+    # No paid API required. Prefer the publisher's readable page; if blocked,
+    # use the full RSS preview only when it contains enough substance to stand alone.
+    article_text = fetch_article_text(item["url"])
+    excerpt = re.sub(r"\\s+", " ", item.get("description", "")).strip()
+    title = item["title"].strip()
+
+    source_text = article_text if len(re.sub(r"\\s+", "", article_text)) >= 500 else ""
+    if not source_text and len(excerpt) >= 260:
+        source_text = excerpt
+        print("Using substantial publisher RSS preview; article HTML was unavailable.")
+    if len(re.sub(r"\\s+", "", source_text)) < 260:
+        raise RuntimeError("Publisher page and RSS preview contain too little readable text.")
+
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+    normalized_source = re.sub(r"[^a-z0-9]+", " ", source_text.casefold()).strip()
+    if normalized_source == normalized_title or len(normalized_source) < 260:
+        raise RuntimeError("Source text is not substantial enough for a useful brief.")
+
+    # Preserve publisher paragraph boundaries where available. For RSS previews,
+    # make readable paragraphs from the supplied text without adding unsupported claims.
+    paragraphs_in = [p.strip() for p in source_text.splitlines() if len(p.strip()) > 35]
+    if len(paragraphs_in) < 2:
+        sentences = re.split(r"(?<=[.!?])\\s+", source_text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 35]
+        paragraphs_in = [" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2)]
+
+    paragraphs = [
+        "This brief summarizes information available from the publisher. It does not add unverified claims or investment advice."
+    ]
+    paragraphs.extend(paragraphs_in[:8])
+    paragraphs.append("Read the original publisher article for full details; the publisher page may contain additional context.")
+    return "\\n\\n".join(paragraphs)
 
 
 def format_telegraph_nodes(text):
