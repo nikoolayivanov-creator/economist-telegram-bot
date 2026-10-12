@@ -241,7 +241,7 @@ def main():
         candidate = fresh[-1]
         seen.update(item["url"] for item in fresh[:-1])
     elif fresh:
-        candidate = fresh[-1]
+        candidate = fresh[0]
     else:
         candidate = None
 
