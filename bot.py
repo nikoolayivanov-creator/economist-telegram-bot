@@ -11,6 +11,7 @@ REPO_API = (
 )
 RAW_BASE = "https://raw.githubusercontent.com/blleng/The-Economist/main/"
 STATE_FILE = Path("last_issue.json")
+ARCHIVE_FILE = Path("archive.json")
 CHANNEL = "@basicofinvestments"
 
 
@@ -132,7 +133,27 @@ def main():
     content = download_epub(path)
 
     print(f"Размер файла: {len(content) / 1024 / 1024:.1f} МБ")
-    send_document(date, path, content)
+        send_document(date, path, content)
+
+    archive = []
+    if ARCHIVE_FILE.exists():
+        archive = json.loads(
+            ARCHIVE_FILE.read_text(encoding="utf-8")
+        )
+
+    if not any(item.get("source_path") == path for item in archive):
+        archive.append({
+            "date": date,
+            "filename": f"The_Economist_{date}.epub",
+            "source_path": path,
+        })
+
+    archive.sort(key=lambda item: item["date"], reverse=True)
+
+    ARCHIVE_FILE.write_text(
+        json.dumps(archive, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     STATE_FILE.write_text(
         json.dumps(
