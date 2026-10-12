@@ -5,6 +5,8 @@ import re
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from urllib.parse import urlencode
+from bs4 import BeautifulSoup, NavigableString, Tag
 from pathlib import Path
 from email.utils import parsedate_to_datetime
 
@@ -167,6 +169,112 @@ def verify_channel(token):
     return chat
 
 
+def telegraph_api(method, payload):
+    body = urlencode(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegra.ph/{method}",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Telegraph {method} HTTP {error.code}: {detail}") from error
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegraph {method} failed: {result}")
+    return result["result"]
+
+
+def telegraph_nodes(element):
+    allowed = {"p", "h3", "h4", "pre", "blockquote", "ul", "ol", "li",
+               "b", "strong", "i", "em", "a", "code", "br", "hr"}
+    nodes = []
+    for child in element.children:
+        if isinstance(child, NavigableString):
+            text = str(child)
+            if text.strip():
+                nodes.append(text)
+            continue
+        if not isinstance(child, Tag):
+            continue
+        tag = child.name.lower()
+        if tag in {"script", "style", "noscript", "button", "svg", "figure"}:
+            continue
+        if tag in {"div", "section", "header", "footer", "span", "article"}:
+            nodes.extend(telegraph_nodes(child))
+            continue
+        if tag == "img":
+            src = child.get("src") or child.get("data-src")
+            if src and src.startswith("https://"):
+                nodes.append({"tag": "img", "attrs": {"src": src}})
+            continue
+        converted = telegraph_nodes(child)
+        if tag not in allowed:
+            nodes.extend(converted)
+            continue
+        node = {"tag": tag, "children": converted}
+        if tag == "a":
+            href = child.get("href", "")
+            if href.startswith("https://") or href.startswith("http://"):
+                node["attrs"] = {"href": href}
+            else:
+                nodes.extend(converted)
+                continue
+        nodes.append(node)
+    return nodes
+
+
+def create_telegraph_article(article):
+    request = urllib.request.Request(
+        article["url"],
+        headers={"User-Agent": "Mozilla/5.0 (compatible; HabrTelegramDigest/1.0)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            page_html = response.read().decode("utf-8", errors="replace")
+    except Exception as error:
+        raise RuntimeError(f"Не удалось загрузить полную статью Habr: {error}") from error
+
+    soup = BeautifulSoup(page_html, "html.parser")
+    body = (
+        soup.select_one(".tm-article-body")
+        or soup.select_one("article .article-formatted-body")
+        or soup.select_one("article")
+        or soup.select_one("main")
+    )
+    if body is None:
+        raise RuntimeError("Не найден основной текст статьи Habr; Telegraph-страница не создана")
+    for unwanted in body.select("script, style, .tm-article-snippet, .tm-user-card, .article__footer, .tm-article-block__share"):
+        unwanted.decompose()
+
+    content = telegraph_nodes(body)
+    if not content:
+        raise RuntimeError("В основной части статьи Habr нет переносимого содержимого")
+
+    token = os.getenv("TELEGRAPH_ACCESS_TOKEN")
+    if not token:
+        token = telegraph_api("createAccount", {
+            "short_name": "HabrDigest",
+            "author_name": "Habr Digest",
+        })["access_token"]
+
+    title = article["title"][:256]
+    author_url = article["url"]
+    author_name = (article.get("author") or "Автор на Habr")[:128]
+    result = telegraph_api("createPage", {
+        "access_token": token,
+        "title": title,
+        "author_name": author_name,
+        "author_url": author_url,
+        "content": json.dumps(content, ensure_ascii=False, separators=(",", ":")),
+        "return_content": "false",
+    })
+    return result["url"]
+
+
 def send_message(article):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     excerpt = article["description"]
@@ -178,26 +286,22 @@ def send_message(article):
     tags = " · ".join(html.escape(label) for label in article["labels"])
     author = html.escape(article.get("author") or "не указан в RSS")
 
-    # Send the article link separately so Telegram can render its webpage card
-    # and offer Instant View when one is available for the Habr page.
+    # Publish the article body to Telegraph, then link to the readable full-text page.
+    full_text_url = create_telegraph_article(article)
+    safe_url = html.escape(full_text_url, quote=True)
+    source_url = html.escape(article["url"], quote=True)
     message = (
         f"<b>{title}</b>\n\n"
         f"{excerpt}\n\n"
         f"<b>Автор:</b> {author}\n"
         f"{tags}\n\n"
-        "Полный текст — по ссылке в следующем сообщении. "
-        "Если для страницы доступен Instant View, Telegram покажет кнопку просмотра."
+        f"<a href=\"{safe_url}\">Открыть полный текст в Telegraph</a>\n"
+        f"<a href=\"{source_url}\">Оригинал на Habr</a>"
     )
     telegram_api("sendMessage", token, {
         "chat_id": CHANNEL,
         "text": message,
         "parse_mode": "HTML",
-        "link_preview_options": {"is_disabled": True},
-    })
-
-    telegram_api("sendMessage", token, {
-        "chat_id": CHANNEL,
-        "text": article["url"],
         "link_preview_options": {"is_disabled": False},
     })
 
