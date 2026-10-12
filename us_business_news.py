@@ -142,8 +142,10 @@ def get_telegraph_token():
 def write_english_brief(item):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        description = item.get("description") or "The publisher's feed provided no detailed preview."
-        return description
+        raise RuntimeError(
+            "OPENAI_API_KEY is missing. Refusing to publish a headline-only Telegraph page; "
+            "add OPENAI_API_KEY in GitHub repository Actions secrets."
+        )
     prompt = (
         "Create a useful, standalone English business-news brief based only on the supplied headline and "
         "feed excerpt. Write 3-5 concise paragraphs and a 'Key points' section with 2-4 bullets. Explain "
@@ -247,15 +249,22 @@ def main():
 
     if candidate:
         brief = write_english_brief(candidate)
+        # Reject summaries that are effectively just the headline or RSS snippet.
+        normalized_title = re.sub(r"[^a-z0-9]+", " ", candidate["title"].casefold()).strip()
+        normalized_brief = re.sub(r"[^a-z0-9]+", " ", brief.casefold()).strip()
+        if len(normalized_brief) < 280 or normalized_brief == normalized_title:
+            raise RuntimeError(
+                "Generated brief is too short to be useful; skipping publication rather than posting "
+                "a duplicate headline/RSS snippet."
+            )
         page_url = create_telegraph_page(get_telegraph_token(), candidate, brief)
         source_url = html.escape(candidate["url"], quote=True)
         page_link = html.escape(page_url, quote=True)
         title = html.escape(candidate["title"])
         source = html.escape(candidate.get("source") or "Original source")
         date = datetime.fromisoformat(candidate["published"]).strftime("%Y-%m-%d %H:%M UTC")
-        excerpt = html.escape((candidate.get("description") or "")[:450])
         message = (
-            f"<b>{title}</b>\n\n{excerpt}\n\n"
+            f"<b>{title}</b>\n\n"
             f"<b>Source:</b> {source}\n<b>Published:</b> {date}\n\n"
             f"<a href=\"{page_link}\">Read the full news brief in Telegram (Telegraph)</a>\n"
             f"<a href=\"{source_url}\">Original article</a>\n\n"
