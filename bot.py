@@ -72,7 +72,7 @@ def send_document(date, path, content):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     boundary = "----EconomistTelegramBotBoundary"
 
-    filename = path.rsplit("/", 1)[-1]
+    filename = f"The_Economist_{date}.epub"
 
     body = (
         f"--{boundary}\r\n"
