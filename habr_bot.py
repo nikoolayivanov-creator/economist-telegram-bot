@@ -12,6 +12,7 @@ RSS_URL = "https://habr.com/ru/rss/articles/?fl=ru&with_hubs=true&with_tags=true
 STATE_FILE = Path("habr_state.json")
 CHANNEL = "-1001317033615"
 MAX_INITIAL_POSTS = 5
+MAX_POSTS_PER_RUN = 1
 MAX_SEEN_URLS = 1000
 
 AI_TERMS = [
@@ -29,6 +30,16 @@ ECONOMY_TERMS = [
     "economy", "economic", "finance", "financial", "investment",
     "investing", "bond market", "equities", "recession", "federal reserve",
     "fed rate", "monetary policy", "fiscal policy", "earnings",
+]
+COMPANY_TERMS = [
+    "компан", "корпорац", "стартап", "бизнес", "предпринимател", "выручк",
+    "прибыл", "убыт", "сделка", "слияни", "поглощени", "ipo", "ipo",
+    "акционер", "гендиректор", "ceo", "cfo", "рынок компании",
+    "company", "companies", "corporate", "startup", "business", "revenue",
+    "profit", "merger", "acquisition", "shareholder", "earnings",
+    "microsoft", "google", "alphabet", "apple", "amazon", "meta", "nvidia",
+    "tesla", "samsung", "intel", "amd", "openai", "anthropic", "yandex",
+    "яндекс", "сбер", "тинькофф", "втб", "газпром", "лукойл", "роснефть",
 ]
 
 
@@ -53,11 +64,14 @@ def classify(title, description, categories):
     ai_body = any(term in body_text for term in AI_TERMS)
     econ_title = any(term in title_text for term in ECONOMY_TERMS)
     econ_body = any(term in body_text for term in ECONOMY_TERMS)
+    company_title = any(term in title_text for term in COMPANY_TERMS)
+    company_body = any(term in body_text for term in COMPANY_TERMS)
 
     if ai_title or ai_body:
         labels.append("Claude / ChatGPT / ИИ")
-    if econ_title or econ_body:
-        labels.append("Экономика и финансы")
+    # Economic coverage is limited to company/business stories, not macroeconomics.
+    if (econ_title or econ_body) and (company_title or company_body):
+        labels.append("Компании и бизнес")
 
     return labels
 
@@ -189,6 +203,8 @@ def main():
         relevant = relevant[-MAX_INITIAL_POSTS:]
 
     sent_urls = set(old_state.get("posted_urls", []))
+    # Publish at most one article per hourly run; newest eligible article first.
+    relevant = relevant[-MAX_POSTS_PER_RUN:]
     for article in relevant:
         if article["url"] in sent_urls:
             continue
