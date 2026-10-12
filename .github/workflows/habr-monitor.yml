@@ -1,14 +1,6 @@
 name: Habr Article Monitor
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "habr_bot.py"
-      - ".github/workflows/habr-monitor.yml"
-  schedule:
-    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions:
