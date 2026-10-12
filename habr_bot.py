@@ -33,7 +33,7 @@ ECONOMY_TERMS = [
 ]
 COMPANY_TERMS = [
     "компан", "корпорац", "стартап", "бизнес", "предпринимател", "выручк",
-    "прибыл", "убыт", "сделка", "слияни", "поглощени", "ipo", "ipo",
+    "прибыл", "убыт", "сделка", "слияни", "поглощени", "ipo",
     "акционер", "гендиректор", "ceo", "cfo", "рынок компании",
     "company", "companies", "corporate", "startup", "business", "revenue",
     "profit", "merger", "acquisition", "shareholder", "earnings",
@@ -166,7 +166,6 @@ def send_message(article):
     if len(excerpt) > 500:
         excerpt = excerpt[:497].rsplit(" ", 1)[0] + "..."
 
-    # Escape article content before using Telegram HTML formatting.
     title = html.escape(article["title"])
     excerpt = html.escape(excerpt)
     url = html.escape(article["url"], quote=True)
@@ -175,6 +174,7 @@ def send_message(article):
         f"<b>{title}</b>\n\n"
         f"{excerpt}\n\n"
         f"{url}\n\n"
+        f"© Habr / автор статьи\n"
         f"{tags}"
     )
     telegram_api("sendMessage", token, {
@@ -212,8 +212,6 @@ def main():
         send_message(article)
         sent_urls.add(article["url"])
 
-    # Mark the current RSS window as processed so unrelated old posts do not
-    # become eligible later; keep enough history to suppress duplicate posts.
     seen.update(article["url"] for article in articles)
     state = {
         "seen_urls": list(seen)[-MAX_SEEN_URLS:],
