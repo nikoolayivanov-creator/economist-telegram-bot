@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install article publishing dependency
+        run: pip install beautifulsoup4==4.13.5
+
       - name: Classify and publish relevant Habr articles
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
