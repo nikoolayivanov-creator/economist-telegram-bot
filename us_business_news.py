@@ -316,6 +316,10 @@ def main():
         item for item in items
         if item["url"] not in seen and item["url"] not in skipped
     ]
+    # On an empty state file, start with the newest available story; after that,
+    # work oldest-first so queued stories are not silently jumped over.
+    if not seen and not skipped:
+        fresh.reverse()
 
     published_count = 0
     # Try multiple candidate stories in one run. A page with insufficient text is
