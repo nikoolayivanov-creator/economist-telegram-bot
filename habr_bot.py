@@ -97,6 +97,12 @@ def fetch_articles():
             continue
 
         description = clean_html(get_text(item, "description"))
+        author = ""
+        for node in item.iter():
+            local_name = node.tag.rsplit("}", 1)[-1].casefold()
+            if local_name in {"creator", "author"} and node.text and node.text.strip():
+                author = node.text.strip()
+                break
         categories = " ".join(
             (node.text or "").strip()
             for node in item.findall("category")
@@ -118,6 +124,7 @@ def fetch_articles():
             "title": title,
             "url": url,
             "description": description,
+            "author": author,
             "labels": labels,
             "timestamp": timestamp,
         })
@@ -170,11 +177,12 @@ def send_message(article):
     excerpt = html.escape(excerpt)
     url = html.escape(article["url"], quote=True)
     tags = " · ".join(html.escape(label) for label in article["labels"])
+    author = html.escape(article.get("author") or "не указан в RSS")
     message = (
         f"<b>{title}</b>\n\n"
         f"{excerpt}\n\n"
-        f"{url}\n\n"
-        f"© Habr / автор статьи\n"
+        f"<b>Автор:</b> {author}\n"
+        f"<b>Источник:</b> {url}\n\n"
         f"{tags}"
     )
     telegram_api("sendMessage", token, {
