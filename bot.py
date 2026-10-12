@@ -4,6 +4,7 @@ import re
 import urllib.request
 import urllib.error
 from pathlib import Path
+from urllib.parse import quote
 
 REPO_API = (
     "https://api.github.com/repos/"
@@ -35,25 +36,17 @@ def get_latest_epub():
         if item.get("type") != "blob":
             continue
 
-        path = item["path"]
-        match = pattern.match(path)
-
+        match = pattern.match(item["path"])
         if match:
-            issues.append((match.group(1), path))
+            issues.append((match.group(1), item["path"]))
 
     if not issues:
-        raise RuntimeError(
-            "Не найден ни один EPUB в GitHub-архиве"
-        )
+        raise RuntimeError("В архиве не найдено ни одного EPUB")
 
-    date, path = max(issues, key=lambda issue: issue[0])
-
-    return date, path
+    return max(issues, key=lambda issue: issue[0])
 
 
 def download_epub(path):
-    from urllib.parse import quote
-
     url = RAW_BASE + quote(path, safe="/")
     request = urllib.request.Request(
         url,
@@ -61,35 +54,39 @@ def download_epub(path):
     )
 
     with urllib.request.urlopen(request, timeout=120) as response:
-        data = response.read()
+        content = response.read()
 
-    if not data or not data.startswith(b"PK"):
-        raise RuntimeError("Скачанный файл не похож на EPUB/ZIP")
+    if not content or not content.startswith(b"PK"):
+        raise RuntimeError("Скачанный файл не похож на EPUB")
 
-    return data
+    return content
 
 
-    send_document(date, path, content)
+def send_document(date, path, content):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     boundary = "----EconomistTelegramBotBoundary"
-
     filename = f"The_Economist_{date}.epub"
 
-    body = (
+    parts = [
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
-        f"{CHANNEL}\r\n"
+        'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+        f"{CHANNEL}\r\n",
+
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="caption"\r\n\r\n'
-        f"The Economist — выпуск от {date}\r\n"
+        'Content-Disposition: form-data; name="caption"\r\n\r\n'
+        f"The Economist — выпуск от {date}\r\n",
+
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="document"; '
+        'Content-Disposition: form-data; name="document"; '
         f'filename="{filename}"\r\n'
-        f"Content-Type: application/epub+zip\r\n\r\n"
-    ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode()
+        "Content-Type: application/epub+zip\r\n\r\n",
+    ]
+
+    body = "".join(parts).encode("utf-8")
+    body += content
+    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
 
     url = f"https://api.telegram.org/bot{token}/sendDocument"
-
     request = urllib.request.Request(
         url,
         data=body,
@@ -119,21 +116,20 @@ def main():
     issue_id = path
 
     previous_id = None
-
     if STATE_FILE.exists():
         previous_id = json.loads(
             STATE_FILE.read_text(encoding="utf-8")
         ).get("path")
 
     if previous_id == issue_id:
-        print(f"Выпуск от {date} уже опубликован.")
+        print(f"Выпуск от {date} уже опубликован. Повтор не нужен.")
         return
 
-    print(f"Найден новый выпуск: {path}")
+    print(f"Найден выпуск: {path}")
     content = download_epub(path)
+    print(f"Размер: {len(content) / 1024 / 1024:.1f} МБ")
 
-    print(f"Размер файла: {len(content) / 1024 / 1024:.1f} МБ")
-        send_document(date, path, content)
+    send_document(date, path, content)
 
     archive = []
     if ARCHIVE_FILE.exists():
@@ -164,7 +160,7 @@ def main():
         encoding="utf-8",
     )
 
-    print(f"EPUB успешно отправлен в {CHANNEL}: {path}")
+    print(f"EPUB отправлен в {CHANNEL}: {path}")
 
 
 if __name__ == "__main__":
