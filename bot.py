@@ -69,7 +69,7 @@ def download_epub(path):
     return data
 
 
-def        send_document(date, path, content)
+    send_document(date, path, content)
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     boundary = "----EconomistTelegramBotBoundary"
 
