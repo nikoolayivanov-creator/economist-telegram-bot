@@ -170,26 +170,35 @@ def verify_channel(token):
 def send_message(article):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     excerpt = article["description"]
-    if len(excerpt) > 500:
-        excerpt = excerpt[:497].rsplit(" ", 1)[0] + "..."
+    if len(excerpt) > 700:
+        excerpt = excerpt[:697].rsplit(" ", 1)[0] + "..."
 
     title = html.escape(article["title"])
     excerpt = html.escape(excerpt)
-    url = html.escape(article["url"], quote=True)
     tags = " · ".join(html.escape(label) for label in article["labels"])
     author = html.escape(article.get("author") or "не указан в RSS")
+
+    # Send the article link separately so Telegram can render its webpage card
+    # and offer Instant View when one is available for the Habr page.
     message = (
         f"<b>{title}</b>\n\n"
         f"{excerpt}\n\n"
         f"<b>Автор:</b> {author}\n"
-        f"<b>Источник:</b> {url}\n\n"
-        f"{tags}"
+        f"{tags}\n\n"
+        "Полный текст — по ссылке в следующем сообщении. "
+        "Если для страницы доступен Instant View, Telegram покажет кнопку просмотра."
     )
     telegram_api("sendMessage", token, {
         "chat_id": CHANNEL,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
+        "link_preview_options": {"is_disabled": True},
+    })
+
+    telegram_api("sendMessage", token, {
+        "chat_id": CHANNEL,
+        "text": article["url"],
+        "link_preview_options": {"is_disabled": False},
     })
 
 
