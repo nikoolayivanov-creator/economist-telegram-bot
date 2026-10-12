@@ -242,9 +242,9 @@ def fetch_article_text(url):
             else:
                 # Jina Reader returns readable plain text, often including metadata first.
                 paragraphs = [
-                    re.sub(r"^#+\\s*", "", line).strip()
+                    re.sub(r"^#+\s*", "", line).strip()
                     for line in raw.splitlines()
-                    if len(re.sub(r"^#+\\s*", "", line).strip()) > 35
+                    if len(re.sub(r"^#+\s*", "", line).strip()) > 35
                 ]
                 paragraphs = [
                     p for p in paragraphs
@@ -261,8 +261,8 @@ def fetch_article_text(url):
                     continue
                 if paragraph not in clean:
                     clean.append(paragraph)
-            text = "\\n\\n".join(clean)[:16000]
-            if len(re.sub(r"\\s+", "", text)) >= 500:
+            text = "\n\n".join(clean)[:16000]
+            if len(re.sub(r"\s+", "", text)) >= 500:
                 print(f"Retrieved article text via {label}: {len(text)} characters.")
                 return text
             print(f"{label} returned too little article text ({len(text)} characters).")
