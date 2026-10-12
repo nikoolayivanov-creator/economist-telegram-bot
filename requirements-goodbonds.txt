@@ -1,1 +1,2 @@
-Telethon==1.42.0\n
+Telethon==1.42.0
+beautifulsoup4==4.13.5
