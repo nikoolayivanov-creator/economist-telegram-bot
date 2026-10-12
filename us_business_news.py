@@ -411,14 +411,14 @@ def main():
             date = datetime.fromisoformat(candidate["published"]).strftime("%Y-%m-%d %H:%M UTC")
             # Put the actual brief in Telegram too; readers should not have to open Telegraph
             # to discover whether useful article content was retrieved.
-            brief_for_telegram = re.sub(r"\\s+", " ", brief).strip()
+            brief_for_telegram = re.sub(r"\s+", " ", brief).strip()
             brief_for_telegram = re.sub(
-                r"(?i)this news brief is based on text available from the publisher\\. "
-                r"it does not add unverified claims or investment advice\\.?\\s*",
+                r"(?i)this news brief is based on text available from the publisher\. "
+                r"it does not add unverified claims or investment advice\.?\s*",
                 "", brief_for_telegram,
             )
             brief_for_telegram = re.sub(
-                r"(?i)read the original publisher article for full details and additional context\\.?\\s*$",
+                r"(?i)read the original publisher article for full details and additional context\.?\s*$",
                 "", brief_for_telegram,
             ).strip()
             if len(brief_for_telegram) < 250:
@@ -427,11 +427,11 @@ def main():
                 brief_for_telegram = brief_for_telegram[:2770].rsplit(" ", 1)[0] + "…"
 
             message = (
-                f"<b>{title}</b>\\n\\n"
-                f"<b>Source:</b> {source}\\n<b>Published:</b> {date}\\n\\n"
-                f"{html.escape(brief_for_telegram)}\\n\\n"
-                f"<a href=\\"{page_link}\\">Open full text / brief</a> · "
-                f"<a href=\\"{source_url}\\">Original article</a>\\n\\n"
+                f"<b>{title}</b>\n\n"
+                f"<b>Source:</b> {source}\n<b>Published:</b> {date}\n\n"
+                f"{html.escape(brief_for_telegram)}\n\n"
+                f"<a href=\"{page_link}\">Open full text / brief</a> · "
+                f"<a href=\"{source_url}\">Original article</a>\n\n"
                 "#USMarkets #Business #Companies"
             )
             telegram("sendMessage", bot_token, {
