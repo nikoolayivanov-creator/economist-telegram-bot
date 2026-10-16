@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "37 * * * *"
   workflow_dispatch:
+  push:
+    paths:
+      - "wired_bot.py"
+      - ".github/workflows/check-wired.yml"
 
 permissions:
   contents: write
