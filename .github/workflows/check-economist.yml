@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+  push:
+    paths:
+      - "bot.py"
+      - ".github/workflows/check-economist.yml"
 
 permissions:
   contents: write
@@ -11,7 +15,6 @@ permissions:
 jobs:
   check-issue:
     runs-on: ubuntu-latest
-
     steps:
       - name: Get repository
         uses: actions/checkout@v4
@@ -20,6 +23,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install image processing dependency
+        run: python -m pip install --disable-pip-version-check Pillow
 
       - name: Check for new issue
         env:
@@ -30,7 +36,7 @@ jobs:
         run: |
           if [[ -n "$(git status --porcelain last_issue.json archive.json)" ]]; then
             git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.email "41898282+users.noreply.github.com"
             git add last_issue.json archive.json
             git commit -m "Update published issue archive"
             git push
