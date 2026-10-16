@@ -130,22 +130,7 @@ def telegram_upload(method, fields, file_field=None, filename=None, file_content
 
 
 def send_issue(date, path, content):
-    cover = extract_cover(content)
-    if cover:
-        cover_data, cover_mime = cover
-        ext = "png" if "png" in cover_mime else "jpg"
-        telegram_upload(
-            "sendPhoto",
-            {"chat_id": CHANNEL, "caption": f"WIRED — выпуск от {date}"},
-            file_field="photo",
-            filename=f"WIRED_{date}_cover.{ext}",
-            file_content=cover_data,
-            mime_type=cover_mime,
-        )
-        print(f"Обложка WIRED отправлена в {CHANNEL}")
-    else:
-        print("Обложка в EPUB не найдена; отправляю выпуск без неё.")
-
+    # Publish the EPUB first, so an optional cover-photo failure cannot block the issue.
     telegram_upload(
         "sendDocument",
         {"chat_id": CHANNEL, "caption": f"WIRED — выпуск от {date}"},
@@ -154,6 +139,28 @@ def send_issue(date, path, content):
         file_content=content,
         mime_type="application/epub+zip",
     )
+    print(f"EPUB WIRED отправлен в {CHANNEL}")
+
+    cover = extract_cover(content)
+    if not cover:
+        print("Обложка в EPUB не найдена; выпуск опубликован без неё.")
+        return
+
+    cover_data, cover_mime = cover
+    ext = "png" if "png" in cover_mime else "jpg"
+    try:
+        telegram_upload(
+            "sendPhoto",
+            {"chat_id": CHANNEL, "caption": f"Обложка WIRED — выпуск от {date}"},
+            file_field="photo",
+            filename=f"WIRED_{date}_cover.{ext}",
+            file_content=cover_data,
+            mime_type=cover_mime,
+        )
+        print(f"Обложка WIRED отправлена в {CHANNEL}")
+    except RuntimeError as error:
+        # The main EPUB has already been delivered; do not fail and resend it next hour.
+        print(f"Не удалось отправить обложку, но EPUB опубликован: {error}")
 
 
 def main():
