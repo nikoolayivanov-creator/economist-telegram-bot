@@ -24,6 +24,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install image processing dependency
+        run: python -m pip install --disable-pip-version-check Pillow
+
       - name: Check for new WIRED issue
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
