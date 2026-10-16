@@ -13,7 +13,8 @@ REPO_API = "https://api.github.com/repos/hehonghui/awesome-english-ebooks/git/tr
 RAW_BASE = "https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/"
 STATE_FILE = Path("wired_last_issue.json")
 ARCHIVE_FILE = Path("wired_archive.json")
-CHANNEL = "@basicofinvestments"
+# Private Telegram channel: use its numeric ID, not a public @username.
+CHANNEL = "-1001317033615"
 
 
 def get_latest_epub():
@@ -130,37 +131,35 @@ def telegram_upload(method, fields, file_field=None, filename=None, file_content
 
 
 def send_issue(date, path, content):
-    # Publish the EPUB first, so an optional cover-photo failure cannot block the issue.
+    # Publish the cover first when available, then the complete EPUB file.
+    cover = extract_cover(content)
+    if cover:
+        cover_data, cover_mime = cover
+        ext = "png" if "png" in cover_mime else "jpg"
+        try:
+            telegram_upload(
+                "sendPhoto",
+                {"chat_id": CHANNEL, "caption": f"WIRED — обложка выпуска от {date}"},
+                file_field="photo",
+                filename=f"WIRED_{date}_cover.{ext}",
+                file_content=cover_data,
+                mime_type=cover_mime,
+            )
+            print(f"Обложка WIRED отправлена в канал {CHANNEL}")
+        except RuntimeError as error:
+            print(f"Не удалось отправить обложку; попробую отправить EPUB: {error}")
+    else:
+        print("Обложка в EPUB не найдена; отправляю выпуск без неё.")
+
     telegram_upload(
         "sendDocument",
-        {"chat_id": CHANNEL, "caption": f"WIRED — выпуск от {date}"},
+        {"chat_id": CHANNEL, "caption": f"WIRED — полный выпуск от {date}"},
         file_field="document",
         filename=f"WIRED_{date}.epub",
         file_content=content,
         mime_type="application/epub+zip",
     )
-    print(f"EPUB WIRED отправлен в {CHANNEL}")
-
-    cover = extract_cover(content)
-    if not cover:
-        print("Обложка в EPUB не найдена; выпуск опубликован без неё.")
-        return
-
-    cover_data, cover_mime = cover
-    ext = "png" if "png" in cover_mime else "jpg"
-    try:
-        telegram_upload(
-            "sendPhoto",
-            {"chat_id": CHANNEL, "caption": f"Обложка WIRED — выпуск от {date}"},
-            file_field="photo",
-            filename=f"WIRED_{date}_cover.{ext}",
-            file_content=cover_data,
-            mime_type=cover_mime,
-        )
-        print(f"Обложка WIRED отправлена в {CHANNEL}")
-    except RuntimeError as error:
-        # The main EPUB has already been delivered; do not fail and resend it next hour.
-        print(f"Не удалось отправить обложку, но EPUB опубликован: {error}")
+    print(f"EPUB WIRED отправлен в канал {CHANNEL}")
 
 
 def main():
@@ -199,7 +198,7 @@ def main():
         json.dumps({"path": path, "date": date}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"EPUB WIRED отправлен в {CHANNEL}: {path}")
+    print(f"Выпуск WIRED от {date} опубликован в канале {CHANNEL}: {path}")
 
 
 if __name__ == "__main__":
