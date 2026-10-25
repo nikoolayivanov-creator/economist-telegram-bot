@@ -10,39 +10,77 @@ from pathlib import Path
 from urllib.parse import quote
 from PIL import Image
 
-REPO_API = (
-    "https://api.github.com/repos/"
-    "blleng/The-Economist/git/trees/main?recursive=1"
-)
-RAW_BASE = "https://raw.githubusercontent.com/blleng/The-Economist/main/"
+PRIMARY_REPO_API = "https://api.github.com/repos/blleng/The-Economist/git/trees/main?recursive=1"
+PRIMARY_RAW_BASE = "https://raw.githubusercontent.com/blleng/The-Economist/main/"
+FALLBACK_REPO_API = "https://api.github.com/repos/hehonghui/awesome-english-ebooks/git/trees/master?recursive=1"
+FALLBACK_RAW_BASE = "https://raw.githubusercontent.com/hehonghui/awesome-english-ebooks/master/"
 STATE_FILE = Path("last_issue.json")
 ARCHIVE_FILE = Path("archive.json")
 CHANNEL = "-1001317033615"
 
 
-def get_latest_epub():
+def get_latest_epub_from_source(api_url, raw_base, source_name):
     request = urllib.request.Request(
-        REPO_API, headers={"User-Agent": "Economist-Telegram-Bot"}
+        api_url, headers={"User-Agent": "Economist-Telegram-Bot"}
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         tree = json.loads(response.read().decode("utf-8"))
 
-    pattern = re.compile(r"^TE-(\d{4}-\d{2}-\d{2})/TE-\1\.epub$", re.IGNORECASE)
+    if source_name == "primary":
+        pattern = re.compile(r"^TE-(\d{4}-\d{2}-\d{2})/TE-\1\.epub$", re.IGNORECASE)
+    else:
+        pattern = re.compile(
+            r"^01_economist/te_(\d{4})\.(\d{2})\.(\d{2})/TheEconomist\.\1\.\2\.\3\.epub$",
+            re.IGNORECASE,
+        )
+
     issues = []
     for item in tree.get("tree", []):
         if item.get("type") != "blob":
             continue
         match = pattern.match(item["path"])
-        if match:
-            issues.append((match.group(1), item["path"]))
+        if not match:
+            continue
+        if source_name == "primary":
+            date = match.group(1)
+        else:
+            date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+        issues.append((date, item["path"], raw_base, source_name))
+
     if not issues:
-        raise RuntimeError("В архиве не найдено ни одного EPUB")
+        return None
     return max(issues, key=lambda issue: issue[0])
 
 
-def download_epub(path):
+def get_latest_epub():
+    # Search the original source first, then the fallback source.
+    candidates = []
+    sources = [
+        (PRIMARY_REPO_API, PRIMARY_RAW_BASE, "primary"),
+        (FALLBACK_REPO_API, FALLBACK_RAW_BASE, "fallback"),
+    ]
+    for api_url, raw_base, source_name in sources:
+        try:
+            issue = get_latest_epub_from_source(api_url, raw_base, source_name)
+            if issue:
+                candidates.append(issue)
+                print(f"Последний выпуск в {source_name}: {issue[0]} ({issue[1]})")
+            else:
+                print(f"В {source_name} не найдено выпусков EPUB.")
+        except Exception as error:
+            print(f"Не удалось проверить {source_name}: {error}")
+
+    if not candidates:
+        raise RuntimeError("Не удалось найти выпуск EPUB ни в одном репозитории")
+
+    # Choose the newest date across both sources. On the same date, the
+    # original repository wins because it is added first.
+    return max(candidates, key=lambda issue: issue[0])
+
+
+def download_epub(path, raw_base):
     request = urllib.request.Request(
-        RAW_BASE + quote(path, safe="/"),
+        raw_base + quote(path, safe="/"),
         headers={"User-Agent": "Economist-Telegram-Bot"},
     )
     with urllib.request.urlopen(request, timeout=180) as response:
@@ -151,23 +189,33 @@ def send_document(date, path, content):
 
 
 def main():
-    date, path = get_latest_epub()
+    date, path, raw_base, source_name = get_latest_epub()
     issue_id = path
-    previous_id = None
-    if STATE_FILE.exists():
-        previous_id = json.loads(STATE_FILE.read_text(encoding="utf-8")).get("path")
-    if previous_id == issue_id:
+    archive = json.loads(ARCHIVE_FILE.read_text(encoding="utf-8")) if ARCHIVE_FILE.exists() else []
+    previous = json.loads(STATE_FILE.read_text(encoding="utf-8")) if STATE_FILE.exists() else {}
+
+    # Dates, not source paths, are the deduplication key: the same issue may
+    # appear in both repositories under different filenames.
+    already_published = (
+        previous.get("date") == date
+        or any(item.get("date") == date for item in archive)
+    )
+    if already_published:
         print(f"Выпуск от {date} уже опубликован. Повтор не нужен.")
         return
 
-    print(f"Найден выпуск: {path}")
-    content = download_epub(path)
+    print(f"Найден выпуск: {path} (источник: {source_name})")
+    content = download_epub(path, raw_base)
     print(f"Размер: {len(content) / 1024 / 1024:.1f} МБ")
     send_document(date, path, content)
 
-    archive = json.loads(ARCHIVE_FILE.read_text(encoding="utf-8")) if ARCHIVE_FILE.exists() else []
-    if not any(item.get("source_path") == path for item in archive):
-        archive.append({"date": date, "filename": f"The_Economist_{date}.epub", "source_path": path})
+    if not any(item.get("date") == date for item in archive):
+        archive.append({
+            "date": date,
+            "filename": f"The_Economist_{date}.epub",
+            "source_path": path,
+            "source_repository": "blleng/The-Economist" if source_name == "primary" else "hehonghui/awesome-english-ebooks",
+        })
     archive.sort(key=lambda item: item["date"], reverse=True)
     ARCHIVE_FILE.write_text(json.dumps(archive, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     STATE_FILE.write_text(json.dumps({"path": issue_id, "date": date}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
